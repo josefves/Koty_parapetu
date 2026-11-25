@@ -1,0 +1,10 @@
+#include "ResourceIds.hpp"
+
+'MDID' 32500 "Add-On Identifier" {
+	1128352311		/* developer id */
+	1009274165		/* local id */
+}
+
+'GICN' 10001 "AddOnIcon" {
+	"AddOnIcon"
+}

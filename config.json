@@ -1,0 +1,13 @@
+{
+    "addOnName": "KotyParapetu",
+    "defaultLanguage": "INT",
+    "languages": [
+        "INT"
+    ],
+    "version": "0.1.0",
+    "copyright": {
+        "name": "Josef Vesely",
+        "year": "%Y"
+    },
+    "description": "Automaticke doplneni vysky parapetu do kot otvoru"
+}
