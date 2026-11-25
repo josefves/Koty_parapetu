@@ -1,0 +1,17 @@
+﻿#include "ResourceIds.hpp"
+
+'STR#' ID_ADDON_INFO "Add-on Name and Description" {
+/* [  1] */		"Kóty parapetů"
+/* [  2] */		"Automaticky doplňuje výšku parapetu (od úrovně podlaží) do kót oken, dveří a otvorů."
+}
+
+'STR#' ID_MENU "Menu" {
+/* [  1] */		"Kóty parapetů"
+/* [  2] */		"Automaticky doplňovat výšku parapetu^ES^EE^EI^ED^EW^E3^EL"
+/* [  3] */		"Přepočítat všechny kóty parapetů^ES^EE^EI^ED^EW^E3^EL"
+/* [  4] */		"Diagnostika vybrané kóty^ES^EE^EI^ED^EW^E3^EL"
+}
+
+'STR#' ID_UI_STRINGS "UI strings" {
+/* [  1] */		"Kóty parapetů"
+}
