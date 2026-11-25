@@ -76,9 +76,8 @@ bool IsOpeningType (API_ElemTypeID typeID)
 
 API_ElemType MakeType (API_ElemTypeID typeID)
 {
-	API_ElemType type;
-	type.typeID = typeID;
-	return type;
+	// pozor: vychozi konstruktor API_ElemType nenastavi variationID ani classID
+	return API_ElemType (typeID);
 }
 
 // --- Preference --------------------------------------------------------------
