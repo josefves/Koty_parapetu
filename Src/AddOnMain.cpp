@@ -54,12 +54,10 @@ GSErrCode MenuCommandHandler (const API_MenuParams* menuParams)
 		case MenuItemToggle:
 			SillDim::SetEnabled (!SillDim::IsEnabled ());
 			UpdateToggleMenuCheck ();
-			if (SillDim::IsEnabled ()) {
-				// po zapnuti srovnat vsechny koty
-				ACAPI_CallUndoableCommand (GetUIString (1), [] () -> GSErrCode {
-					return SillDim::RecalculateAll ();
-				});
-			}
+			// po zapnuti srovnat vsechny koty, po vypnuti texty odstranit a vratit vysky otvoru Archicadu
+			ACAPI_CallUndoableCommand (GetUIString (1), [] () -> GSErrCode {
+				return SillDim::IsEnabled () ? SillDim::RecalculateAll () : SillDim::RemoveAll ();
+			});
 			break;
 
 		case MenuItemRecalculate:

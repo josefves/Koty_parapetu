@@ -255,9 +255,6 @@ Vec		Scale (const Vec& v, double s)					{ return { v.x * s, v.y * s }; }
 API_Coord Add (const API_Coord& p, const Vec& v)		{ API_Coord r; r.x = p.x + v.x; r.y = p.y + v.y; return r; }
 
 
-double OffsetAfterHeightText (const GS::UniString& heightText, short font, double sizeMM, double drawingScale);
-
-
 GS::Array<DesiredText> ComputeDesiredTexts (const API_Element& dim, const API_ElementMemo& memo, const GS::HashTable<short, double>& levels,
 											 double drawingScale, GS::UniString* log)
 {
@@ -323,8 +320,7 @@ GS::Array<DesiredText> ComputeDesiredTexts (const API_Element& dim, const API_El
 		const GS::UniString sillText = FormatMillimeters (sill);
 		Log (GS::UniString::Printf ("Usek %d-%d: otvor, vyska %.0f mm, parapet %s mm", static_cast<int> (k), static_cast<int> (k + 1),
 									openingHeight * 1000.0, sillText.ToCStr (CC_UTF8).Get ()));
-		if (std::fabs (sill) < 0.0005)
-			continue;	// nulovy parapet (napr. dvere) se nepise
+		const bool hasSill = std::fabs (sill) >= 0.0005;	// nulovy parapet (napr. dvere) se nepise
 		doneOpenings.Add (ToGS (openingGuid));
 
 		// Smer kotovaci cary
@@ -384,55 +380,19 @@ GS::Array<DesiredText> ComputeDesiredTexts (const API_Element& dim, const API_El
 		desired.layer		= dim.header.layer;
 		desired.floorInd	= dim.header.floorInd;
 
-		// "1 500 (900)" - za vyskou otvoru jedna mezera a hned zavorka
-		const double offsetAlong = OffsetAfterHeightText (FormatMillimeters (openingHeight), note.noteFont, note.noteSize, drawingScale);
-		desired.content	= GS::UniString ("(") + sillText + ")";
-		desired.anchor	= APIAnc_LM;
-		desired.loc		= Add (lowerLineMid, Scale (reading, offsetAlong));
+		// Cely spodni radek "1 500 (900)" vycentrovany na usek koty.
+		// Vlastni vysku otvoru Archicadu doplnek u koty vypne (detailedHoleDim), aby se nezdvojila.
+		desired.content	= FormatMillimeters (openingHeight);
+		if (hasSill)
+			desired.content += GS::UniString (" (") + sillText + ")";
+		desired.anchor	= APIAnc_MM;
+		desired.loc		= lowerLineMid;
 
 		Log (GS::UniString::Printf ("  -> text \"%s\" na [%.3f; %.3f], uhel %.3f, vyska pisma %.3f m",
 									desired.content.ToCStr (CC_UTF8).Get (), desired.loc.x, desired.loc.y, angle, textHeight));
 		result.Push (desired);
 	}
 	return result;
-}
-
-// --- Mereni delky textu -------------------------------------------------------
-
-// Delka radku textu v modelovych jednotkach (s ohledem na meritko)
-double MeasureText (const GS::UniString& text, short font, double sizeMM, double drawingScale)
-{
-	GS::UniString lineText = text;
-
-	API_TextLinePars pars {};
-	pars.index			= 0;
-	pars.drvScaleCorr	= true;
-	pars.wFont			= font;
-	pars.wFace			= 0;
-	pars.wSlant			= 1.5707963267948966;	// PI/2 = rovne pismo
-	pars.wSize			= sizeMM;
-	pars.lineUniStr		= &lineText;
-
-	double length = 0.0;
-	if (ACAPI_Element_GetTextLineLength (&pars, &length) == NoError && length > Eps)
-		return length;
-
-	// nouzovy odhad
-	return text.GetLength () * DigitWidthFactor * sizeMM / 1000.0 * drawingScale;
-}
-
-
-// Vzdalenost od stredu textu vysky otvoru k zacatku "(" = polovina vysky otvoru + jedna mezera
-double OffsetAfterHeightText (const GS::UniString& heightText, short font, double sizeMM, double drawingScale)
-{
-	const double heightWidth = MeasureText (heightText, font, sizeMM, drawingScale);
-
-	// sirka mezery: rozdil "1 1" a "11" (samotna mezera na konci by se mohla oriznout)
-	double spaceWidth = MeasureText ("1 1", font, sizeMM, drawingScale) - MeasureText ("11", font, sizeMM, drawingScale);
-	if (spaceWidth < Eps)
-		spaceWidth = 0.3 * sizeMM / 1000.0 * drawingScale;
-
-	return 0.5 * heightWidth + spaceWidth;
 }
 
 // --- Vytvoreni / zmena / smazani textu ------------------------------------------
@@ -542,6 +502,20 @@ void UpdateText (const API_Guid& textGuid, const DesiredText& desired)
 }
 
 
+void SetNativeOpeningHeight (API_Element& dim, bool show)
+{
+	dim.dimension.detailedHoleDim = show;
+
+	API_Element mask;
+	ACAPI_ELEMENT_MASK_CLEAR (mask);
+	ACAPI_ELEMENT_MASK_SET (mask, API_DimensionType, detailedHoleDim);
+
+	const GSErrCode err = ACAPI_Element_Change (&dim, &mask, nullptr, 0, true);
+	if (err != NoError)
+		lastErrors += GS::UniString::Printf ("Zmena nastaveni koty selhala, chyba %d\n", static_cast<int> (err));
+}
+
+
 void SyncDimension (const API_Guid& dimGuid, const GS::Array<OurText>& existing,
 					const GS::HashTable<short, double>& levels, double drawingScale, GS::Array<API_Guid>& toDelete)
 {
@@ -554,6 +528,10 @@ void SyncDimension (const API_Guid& dimGuid, const GS::Array<OurText>& existing,
 		if (ACAPI_Element_GetMemo (dimGuid, &memo) == NoError)
 			desired = ComputeDesiredTexts (dim, memo, levels, drawingScale, nullptr);
 		ACAPI_DisposeElemMemoHdls (&memo);
+
+		// Vysku otvoru pise doplnek sam (spolecne s parapetem) - vestavenou vysku koty vypnout
+		if (!desired.IsEmpty () && dim.dimension.detailedHoleDim)
+			SetNativeOpeningHeight (dim, false);
 	}
 
 	GS::HashSet<GS::Guid> usedTexts;
@@ -908,6 +886,46 @@ void DiagnoseSelection ()
 		report += "\nVyberte kotu a spustte diagnostiku znovu.";
 
 	ACAPI_WriteReport (report, true);
+}
+
+
+GSErrCode RemoveAll ()
+{
+	if (processing)
+		return NoError;
+	processing = true;
+
+	API_DatabaseInfo origDb {};
+	ACAPI_Database_GetCurrentDatabase (&origDb);
+	bool switched = false;
+	if (origDb.typeID != APIWind_FloorPlanID) {
+		API_DatabaseInfo planDb {};
+		planDb.typeID = APIWind_FloorPlanID;
+		switched = ACAPI_Database_ChangeCurrentDatabase (&planDb) == NoError;
+	}
+
+	const GS::Array<OurText> ourTexts = CollectOurTexts ();
+	GS::Array<API_Guid>		textGuids;
+	GS::HashSet<GS::Guid>	dims;
+	for (const OurText& t : ourTexts) {
+		textGuids.Push (t.textGuid);
+		dims.Add (ToGS (t.dimGuid));
+	}
+	if (!textGuids.IsEmpty ())
+		ACAPI_Element_Delete (textGuids);
+
+	// vratit vestavenou vysku otvoru do kot
+	for (const GS::Guid& guid : dims) {
+		API_Element dim {};
+		dim.header.guid = GSGuid2APIGuid (guid);
+		if (ACAPI_Element_Get (&dim) == NoError && dim.header.type.typeID == API_DimensionID && !dim.dimension.detailedHoleDim)
+			SetNativeOpeningHeight (dim, true);
+	}
+
+	if (switched)
+		ACAPI_Database_ChangeCurrentDatabase (&origDb);
+	processing = false;
+	return NoError;
 }
 
 

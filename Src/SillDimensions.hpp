@@ -29,6 +29,9 @@ GSErrCode	ElementEventHandler (const API_NotifyElementType* elemType);
 // Vypise informace o vybranych kotach (pro ladeni)
 void		DiagnoseSelection ();
 
+// Smaze vsechny texty doplnku a vrati kotam vestavenou vysku otvoru
+GSErrCode	RemoveAll ();
+
 // Prepocet vsech kot v projektu (spoustet uvnitr ACAPI_CallUndoableCommand)
 GSErrCode	RecalculateAll ();
 
