@@ -9,6 +9,7 @@
 /* [  1] */		"Kóty parapetů"
 /* [  2] */		"Automaticky doplňovat výšku parapetu^ES^EE^EI^ED^EW^E3^EL"
 /* [  3] */		"Přepočítat všechny kóty parapetů^ES^EE^EI^ED^EW^E3^EL"
+/* [  4] */		"Diagnostika vybrané kóty^ES^EE^EI^ED^EW^E3^EL"
 }
 
 'STR#' ID_UI_STRINGS "UI strings" {
