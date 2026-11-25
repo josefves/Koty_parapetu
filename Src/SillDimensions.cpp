@@ -53,6 +53,7 @@ struct DesiredText {
 };
 
 bool						enabled			= true;
+GS::UniString				lastErrors;		// chyby posledniho prepoctu (pro diagnostiku)
 bool						processing		= false;
 
 GS::HashSet<GS::Guid>		pendingDims;
@@ -150,15 +151,11 @@ bool CalcSillHeight (const API_Guid& openingGuid, const GS::HashTable<short, dou
 	const double wallTop		= hasWall ? (wallBottom + wall.wall.height) : 0.0;
 	const double linkedStory	= LevelOf (levels, base.verticalLink.linkValue) - ownLevel;
 
-	switch (base.verticalLink.linkType) {
-		case API_LinkSillToWallBottom:		sill = wallBottom + wd.lower;						break;
-		case API_LinkSillToStory:			sill = linkedStory + wd.lower;						break;
-		case API_LinkHeaderToWallBottom:	sill = wallBottom + wd.lower - base.height;			break;
-		case API_LinkHeaderToStory:			sill = linkedStory + wd.lower - base.height;		break;
-		case API_LinkSillToWallTop:			sill = wallTop + wd.lower;							break;
-		case API_LinkHeaderToWallTop:		sill = wallTop + wd.lower - base.height;			break;
-		default:							sill = wallBottom + wd.lower;						break;
-	}
+	// Pozn.: API uklada "lower" vzdy vztazene ke spodni hrane steny bez ohledu na zpusob
+	// vazby nastaveny v dialogu (overeno: stena -100, parapet k podlazi 900 -> lower 1000).
+	(void) wallTop;
+	(void) linkedStory;
+	sill = hasWall ? (wallBottom + wd.lower) : (linkedStory + wd.lower);
 	return true;
 }
 
@@ -491,7 +488,9 @@ void CreateText (const API_Guid& dimGuid, const DesiredText& desired)
 	API_Element		text {};
 	API_ElementMemo	memo {};
 	text.header.type = MakeType (API_TextID);
-	if (ACAPI_Element_GetDefaults (&text, &memo) != NoError) {
+	const GSErrCode defErr = ACAPI_Element_GetDefaults (&text, &memo);
+	if (defErr != NoError) {
+		lastErrors += GS::UniString::Printf ("Vychozi nastaveni textu nelze nacist, chyba %d\n", static_cast<int> (defErr));
 		ACAPI_DisposeElemMemoHdls (&memo);
 		return;
 	}
@@ -501,8 +500,11 @@ void CreateText (const API_Guid& dimGuid, const DesiredText& desired)
 
 	API_ElementMemo newMemo {};
 	newMemo.textContent = new GS::UniString (desired.content);
-	if (ACAPI_Element_Create (&text, &newMemo) == NoError)
+	const GSErrCode err = ACAPI_Element_Create (&text, &newMemo);
+	if (err == NoError)
 		WriteUserData (text.header.guid, dimGuid, desired.openingGuid);
+	else
+		lastErrors += GS::UniString::Printf ("Vytvoreni textu %s selhalo, chyba %d\n", desired.content.ToCStr (CC_UTF8).Get (), static_cast<int> (err));
 	ACAPI_DisposeElemMemoHdls (&newMemo);
 }
 
@@ -534,7 +536,9 @@ void UpdateText (const API_Guid& textGuid, const DesiredText& desired)
 
 	API_ElementMemo memo {};
 	memo.textContent = new GS::UniString (desired.content);
-	ACAPI_Element_Change (&text, &mask, &memo, APIMemoMask_TextContent, true);
+	const GSErrCode err = ACAPI_Element_Change (&text, &mask, &memo, APIMemoMask_TextContent, true);
+	if (err != NoError)
+		lastErrors += GS::UniString::Printf ("Zmena textu selhala, chyba %d\n", static_cast<int> (err));
 	ACAPI_DisposeElemMemoHdls (&memo);
 }
 
@@ -624,6 +628,7 @@ void Process (bool allDims)
 	if (processing)
 		return;
 	processing = true;
+	lastErrors = GS::UniString::Printf ("Posledni prepocet: %s\n", allDims ? "vse" : "zmeny");
 
 	// Kota a jeji texty jsou v pudorysu - pracuje se vzdy v databazi pudorysu
 	API_DatabaseInfo origDb {};
@@ -632,8 +637,10 @@ void Process (bool allDims)
 	if (origDb.typeID != APIWind_FloorPlanID) {
 		API_DatabaseInfo planDb {};
 		planDb.typeID = APIWind_FloorPlanID;
-		switched = ACAPI_Database_ChangeCurrentDatabase (&planDb) == NoError;
+		const GSErrCode dbErr = ACAPI_Database_ChangeCurrentDatabase (&planDb);
+		switched = dbErr == NoError;
 		if (!switched) {
+			lastErrors += GS::UniString::Printf ("Prepnuti do pudorysu selhalo, chyba %d\n", static_cast<int> (dbErr));
 			processing = false;
 			return;
 		}
@@ -703,6 +710,9 @@ void Process (bool allDims)
 
 	if (!toDelete.IsEmpty ())
 		ACAPI_Element_Delete (toDelete);
+
+	lastErrors += GS::UniString::Printf ("Zpracovano kot: %u, texty ke smazani: %u\n",
+										 static_cast<unsigned int> (dimsOrdered.GetSize ()), static_cast<unsigned int> (toDelete.GetSize ()));
 
 	if (switched)
 		ACAPI_Database_ChangeCurrentDatabase (&origDb);
@@ -870,6 +880,7 @@ void DiagnoseSelection ()
 
 	const GS::Array<OurText> ourTexts = CollectOurTexts ();
 	report += GS::UniString::Printf ("Textu parapetu v projektu: %u\n", static_cast<unsigned int> (ourTexts.GetSize ()));
+	report += lastErrors.IsEmpty () ? GS::UniString ("Prepocet zatim neprobehl.\n") : lastErrors;
 
 	UInt32 dimCount = 0;
 	for (const API_Neig& neig : selNeigs) {
