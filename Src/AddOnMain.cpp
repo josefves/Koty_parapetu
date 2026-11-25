@@ -1,6 +1,6 @@
 // *****************************************************************************
 // KotyParapetu - hlavni soubor doplnku
-// Menu: Moznosti > Koty parapetu
+// Menu: Moznosti > Koty parapetu (podnabidka)
 //   1) Automaticky doplnovat vysku parapetu (prepinac)
 //   2) Prepocitat vsechny koty parapetu
 // *****************************************************************************
@@ -112,7 +112,8 @@ API_AddonType CheckEnvironment (API_EnvirParams* envir)
 
 GSErrCode RegisterInterface (void)
 {
-	return ACAPI_MenuItem_RegisterMenu (ID_MENU, 0, MenuCode_UserDef, MenuFlag_Default);
+	// Moznosti > Koty parapetu > (polozky): prvni retezec = nazev podnabidky, dalsi = polozky
+	return ACAPI_MenuItem_RegisterMenu (ID_MENU, 0, MenuCode_Options1, MenuFlag_Default);
 }
 
 
