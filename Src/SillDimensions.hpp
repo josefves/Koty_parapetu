@@ -26,6 +26,9 @@ void		OnProjectOpened ();
 // Handler notifikaci prvku
 GSErrCode	ElementEventHandler (const API_NotifyElementType* elemType);
 
+// Vypise informace o vybranych kotach (pro ladeni)
+void		DiagnoseSelection ();
+
 // Prepocet vsech kot v projektu (spoustet uvnitr ACAPI_CallUndoableCommand)
 GSErrCode	RecalculateAll ();
 

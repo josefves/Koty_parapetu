@@ -165,7 +165,18 @@ bool CalcSillHeight (const API_Guid& openingGuid, const GS::HashTable<short, dou
 
 GS::UniString FormatMillimeters (double meters)
 {
-	return GS::UniString::Printf ("%.0f", std::round (meters * 1000.0));
+	// cele milimetry, tisice oddelene mezerou (jako v ceskych kotach: 1 500)
+	const long long value = static_cast<long long> (std::llround (meters * 1000.0));
+	const bool negative = value < 0;
+	GS::UniString digits = GS::UniString::Printf ("%lld", negative ? -value : value);
+	GS::UniString result;
+	const UIndex len = digits.GetLength ();
+	for (UIndex i = 0; i < len; ++i) {
+		if (i > 0 && (len - i) % 3 == 0)
+			result.Append (GS::UniChar (' '));
+		result.Append (digits[i]);
+	}
+	return negative ? GS::UniString ("-") + result : result;
 }
 
 // --- Nase texty --------------------------------------------------------------
@@ -251,35 +262,72 @@ API_Coord Add (const API_Coord& p, const Vec& v)		{ API_Coord r; r.x = p.x + v.x
 double OffsetAfterHeightText (const GS::UniString& heightText, short font, double sizeMM, double drawingScale);
 
 
-GS::Array<DesiredText> ComputeDesiredTexts (const API_Element& dim, const API_ElementMemo& memo, const GS::HashTable<short, double>& levels, double drawingScale)
+GS::Array<DesiredText> ComputeDesiredTexts (const API_Element& dim, const API_ElementMemo& memo, const GS::HashTable<short, double>& levels,
+											 double drawingScale, GS::UniString* log)
 {
 	GS::Array<DesiredText> result;
-	if (memo.dimElems == nullptr)
-		return result;
+	auto Log = [&] (const GS::UniString& line) {
+		if (log != nullptr)
+			*log += line + "\n";
+	};
 
-	const Int32 nElems = static_cast<Int32> (BMGetHandleSize (reinterpret_cast<GSHandle> (memo.dimElems)) / sizeof (API_DimElem));
+	if (memo.dimElems == nullptr) {
+		Log ("Kota nema body (dimElems).");
+		return result;
+	}
+
+	const Int32 nElems = dim.dimension.nDimElem;
+	Log (GS::UniString::Printf ("Pocet bodu koty: %d, textWay: %d, textPos: %d, detailedHoleDim: %d, meritko: 1:%.0f",
+								static_cast<int> (nElems), static_cast<int> (dim.dimension.textWay), static_cast<int> (dim.dimension.textPos),
+								dim.dimension.detailedHoleDim ? 1 : 0, drawingScale));
 	if (nElems < 2)
 		return result;
 
 	const API_DimElem* elems = *memo.dimElems;
+
+	// Ke kazdemu bodu: guid otvoru (okno/dvere), jinak NULL
+	GS::Array<API_Guid> pointOpening;
+	for (Int32 k = 0; k < nElems; ++k) {
+		const API_Base& base = elems[k].base.base;
+		API_Guid openingGuid = APINULLGuid;
+		API_Elem_Head head {};
+		head.guid = base.guid;
+		GS::UniString typeName = "?";
+		if (base.guid != APINULLGuid && ACAPI_Element_GetHeader (&head) == NoError) {
+			ACAPI_Element_GetElemTypeName (head.type, typeName);
+			if (IsOpeningType (head.type.typeID))
+				openingGuid = base.guid;
+		}
+		pointOpening.Push (openingGuid);
+		Log (GS::UniString::Printf ("Bod %d: typ zakladny %d (%s), special %d, inIndex %d, pos [%.3f; %.3f], text fixPos %d, pos textu [%.3f; %.3f], velikost %.2f mm, uhel %.3f",
+									static_cast<int> (k), static_cast<int> (base.type.typeID), typeName.ToCStr (CC_UTF8).Get (),
+									static_cast<int> (base.special), static_cast<int> (base.inIndex),
+									elems[k].pos.x, elems[k].pos.y, elems[k].note.fixPos ? 1 : 0,
+									elems[k].note.pos.x, elems[k].note.pos.y, elems[k].note.noteSize, elems[k].note.noteAngle));
+	}
+
 	GS::HashSet<GS::Guid> doneOpenings;
 
 	for (Int32 k = 0; k + 1 < nElems; ++k) {
 		const API_DimElem& a = elems[k];
 		const API_DimElem& b = elems[k + 1];
 
-		const API_Guid& openingGuid = a.base.base.guid;
-		if (openingGuid == APINULLGuid || openingGuid != b.base.base.guid || !IsOpeningType (a.base.base.type.typeID))
+		const API_Guid openingGuid = pointOpening[k];
+		if (openingGuid == APINULLGuid || pointOpening[k + 1] != openingGuid)
 			continue;
 		if (doneOpenings.Contains (ToGS (openingGuid)))
 			continue;
 
 		double sill = 0.0, openingHeight = 0.0;
-		if (!CalcSillHeight (openingGuid, levels, sill, openingHeight))
+		if (!CalcSillHeight (openingGuid, levels, sill, openingHeight)) {
+			Log (GS::UniString::Printf ("Usek %d-%d: parapet nelze urcit.", static_cast<int> (k), static_cast<int> (k + 1)));
 			continue;
+		}
 
 		const GS::UniString sillText = FormatMillimeters (sill);
-		if (sillText == "0" || sillText == "-0")
+		Log (GS::UniString::Printf ("Usek %d-%d: otvor, vyska %.0f mm, parapet %s mm", static_cast<int> (k), static_cast<int> (k + 1),
+									openingHeight * 1000.0, sillText.ToCStr (CC_UTF8).Get ()));
+		if (std::fabs (sill) < 0.0005)
 			continue;	// nulovy parapet (napr. dvere) se nepise
 		doneOpenings.Add (ToGS (openingGuid));
 
@@ -293,57 +341,61 @@ GS::Array<DesiredText> ComputeDesiredTexts (const API_Element& dim, const API_El
 				continue;
 		}
 		dir = Scale (dir, 1.0 / dirLen);
-		const Vec normal = { -dir.y, dir.x };
 
 		API_Coord mid;
 		mid.x = (a.pos.x + b.pos.x) / 2.0;
 		mid.y = (a.pos.y + b.pos.y) / 2.0;
 
-		// Text sirky otvoru - ten, ktery lezi mezi obema body
-		const API_NoteType* note = &a.note;
-		{
-			const double tA = Dot (Sub (a.note.pos, a.pos), dir);
-			if (tA < -Eps || tA > dirLen + Eps)
-				note = &b.note;
+		// Vlastnosti textu koty (u automaticky umisteneho textu muze byt cast hodnot prazdna)
+		API_NoteType note = a.note;
+		if (note.noteSize < Eps)
+			note = dim.dimension.defNote;
+		if (note.noteSize < Eps)
+			note.noteSize = 2.5;
+
+		const double textHeight = note.noteSize / 1000.0 * drawingScale;	// vyska pisma v modelu
+
+		// Smer cteni textu (text vzdy "nahoru")
+		Vec reading = dir;
+		if (dim.dimension.textWay == APIDir_Horizontal)
+			reading = { 1.0, 0.0 };
+		else if (dim.dimension.textWay == APIDir_Vertical)
+			reading = { 0.0, 1.0 };
+		else if (reading.x < -Eps || (std::fabs (reading.x) <= Eps && reading.y < 0.0))
+			reading = Scale (reading, -1.0);
+		const double angle	= std::atan2 (reading.y, reading.x);
+		const Vec	 up		= { -reading.y, reading.x };
+		const Vec	 down	= Scale (up, -1.0);
+
+		// Mezera mezi carou a textem: z pevne umisteneho textu sirky, jinak 1/4 vysky pisma
+		double gap = 0.25 * textHeight;
+		const API_NoteType& widthNote = (Dot (Sub (a.note.pos, a.pos), dir) >= -Eps && Dot (Sub (a.note.pos, a.pos), dir) <= dirLen + Eps) ? a.note : b.note;
+		if (widthNote.fixPos) {
+			const double d = std::fabs (Dot (Sub (widthNote.pos, mid), up));
+			if (d > Eps && d < 5.0 * textHeight)
+				gap = d;
 		}
 
-		const double textHeight = note->noteSize / 1000.0 * drawingScale;	// vyska pisma v modelu
-		double offset = Dot (Sub (note->pos, mid), normal);				// vzdalenost textu sirky od cary
-		const double upSign = (offset < 0.0) ? -1.0 : 1.0;
-		offset = std::fabs (offset);
-		if (offset < Eps)
-			offset = 0.5 * textHeight;
-
-		// Smer cteni textu
-		Vec reading = { std::cos (note->noteAngle), std::sin (note->noteAngle) };
-		if (Dot (reading, dir) < 0.0)
-			reading = Scale (reading, -1.0);
-
-		// Stred vysky otvoru pod carou = zrcadlo textu sirky (predpoklad: pozice textu = spodni okraj textu)
-		const Vec below = Scale (normal, -upSign);
-		const API_Coord lowerLineMid = Add (mid, Scale (below, offset + 0.5 * textHeight));
+		// Stred textu vysky otvoru pod carou
+		const API_Coord lowerLineMid = Add (mid, Scale (down, gap + 0.5 * textHeight));
 
 		DesiredText desired;
 		desired.openingGuid	= openingGuid;
-		desired.angle		= note->noteAngle;
-		desired.size		= note->noteSize;
-		desired.pen			= note->notePen;
-		desired.font		= note->noteFont;
+		desired.angle		= angle;
+		desired.size		= note.noteSize;
+		desired.pen			= note.notePen;
+		desired.font		= note.noteFont;
 		desired.layer		= dim.header.layer;
 		desired.floorInd	= dim.header.floorInd;
 
-		if (dim.dimension.detailedHoleDim) {
-			// "1500 (900)" - za vyskou otvoru jedna mezera a hned zavorka
-			const double offsetAlong = OffsetAfterHeightText (FormatMillimeters (openingHeight), note->noteFont, note->noteSize, drawingScale);
-			desired.content	= GS::UniString ("(") + sillText + ")";
-			desired.anchor	= APIAnc_LM;
-			desired.loc		= Add (lowerLineMid, Scale (reading, offsetAlong));
-		} else {
-			// Kota bez vysky otvoru - jen "(900)" uprostred pod carou
-			desired.content	= GS::UniString ("(") + sillText + ")";
-			desired.anchor	= APIAnc_MM;
-			desired.loc		= lowerLineMid;
-		}
+		// "1 500 (900)" - za vyskou otvoru jedna mezera a hned zavorka
+		const double offsetAlong = OffsetAfterHeightText (FormatMillimeters (openingHeight), note.noteFont, note.noteSize, drawingScale);
+		desired.content	= GS::UniString ("(") + sillText + ")";
+		desired.anchor	= APIAnc_LM;
+		desired.loc		= Add (lowerLineMid, Scale (reading, offsetAlong));
+
+		Log (GS::UniString::Printf ("  -> text \"%s\" na [%.3f; %.3f], uhel %.3f, vyska pisma %.3f m",
+									desired.content.ToCStr (CC_UTF8).Get (), desired.loc.x, desired.loc.y, angle, textHeight));
 		result.Push (desired);
 	}
 	return result;
@@ -497,7 +549,7 @@ void SyncDimension (const API_Guid& dimGuid, const GS::Array<OurText>& existing,
 	if (ACAPI_Element_Get (&dim) == NoError && dim.header.type.typeID == API_DimensionID) {
 		API_ElementMemo memo {};
 		if (ACAPI_Element_GetMemo (dimGuid, &memo) == NoError)
-			desired = ComputeDesiredTexts (dim, memo, levels, drawingScale);
+			desired = ComputeDesiredTexts (dim, memo, levels, drawingScale, nullptr);
 		ACAPI_DisposeElemMemoHdls (&memo);
 	}
 
@@ -798,6 +850,54 @@ GSErrCode ElementEventHandler (const API_NotifyElementType* elemType)
 			break;
 	}
 	return NoError;
+}
+
+
+void DiagnoseSelection ()
+{
+	GS::UniString report = GS::UniString::Printf ("Automatika: %s\n", enabled ? "zapnuta" : "vypnuta");
+
+	API_SelectionInfo	selectionInfo {};
+	GS::Array<API_Neig>	selNeigs;
+	ACAPI_Selection_Get (&selectionInfo, &selNeigs, false, false);
+	BMKillHandle (reinterpret_cast<GSHandle*> (&selectionInfo.marquee.coords));
+
+	const GS::HashTable<short, double> levels = GetStoryLevels ();
+	double drawingScale = 100.0;
+	ACAPI_Drawing_GetDrawingScale (&drawingScale);
+	if (drawingScale < Eps)
+		drawingScale = 100.0;
+
+	const GS::Array<OurText> ourTexts = CollectOurTexts ();
+	report += GS::UniString::Printf ("Textu parapetu v projektu: %u\n", static_cast<unsigned int> (ourTexts.GetSize ()));
+
+	UInt32 dimCount = 0;
+	for (const API_Neig& neig : selNeigs) {
+		API_Element dim {};
+		dim.header.guid = neig.guid;
+		if (ACAPI_Element_Get (&dim) != NoError || dim.header.type.typeID != API_DimensionID)
+			continue;
+		++dimCount;
+
+		UInt32 ownTexts = 0;
+		for (const OurText& t : ourTexts) {
+			if (t.dimGuid == dim.header.guid)
+				++ownTexts;
+		}
+		report += GS::UniString::Printf ("\n=== Kota %u (texty parapetu: %u) ===\n", static_cast<unsigned int> (dimCount), static_cast<unsigned int> (ownTexts));
+
+		API_ElementMemo memo {};
+		if (ACAPI_Element_GetMemo (dim.header.guid, &memo) == NoError)
+			ComputeDesiredTexts (dim, memo, levels, drawingScale, &report);
+		else
+			report += "Nelze nacist body koty.\n";
+		ACAPI_DisposeElemMemoHdls (&memo);
+	}
+
+	if (dimCount == 0)
+		report += "\nVyberte kotu a spustte diagnostiku znovu.";
+
+	ACAPI_WriteReport (report, true);
 }
 
 

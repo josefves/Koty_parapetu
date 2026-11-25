@@ -17,6 +17,7 @@ namespace {
 
 constexpr short MenuItemToggle		= 1;
 constexpr short MenuItemRecalculate	= 2;
+constexpr short MenuItemDiagnose	= 3;
 
 
 void UpdateToggleMenuCheck ()
@@ -65,6 +66,10 @@ GSErrCode MenuCommandHandler (const API_MenuParams* menuParams)
 			ACAPI_CallUndoableCommand (GetUIString (1), [] () -> GSErrCode {
 				return SillDim::RecalculateAll ();
 			});
+			break;
+
+		case MenuItemDiagnose:
+			SillDim::DiagnoseSelection ();
 			break;
 
 		default:
